@@ -12,10 +12,20 @@
 //
 // The on-board RGB LED flashes green each time a message arrives, which is
 // handy while positioning the remote to test range.
+//
+// Arduino Cloud: the door state is published as cloud variables (see
+// thingProperties.h). Copy arduino_secrets.h.example to arduino_secrets.h
+// and fill it in. The cloud connection only starts once the remote is first
+// heard, so a reboot never publishes a made-up door state. ESP-NOW and WiFi
+// share one radio, so once joined, ESP-NOW listens on the router's channel;
+// WIFI_CHANNEL here and in coop_remote must match it. The channel is
+// printed to Serial when the cloud connects.
 
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+
+#include "thingProperties.h"
 
 const int RED_LED_PIN = D3;
 
@@ -25,7 +35,7 @@ void setStatusLed(bool on) {
   digitalWrite(LED_BUILTIN, on);
 }
 
-const uint8_t WIFI_CHANNEL = 1;          // Must match coop_remote
+const uint8_t WIFI_CHANNEL = 1;          // Must match coop_remote and the router's channel
 const uint32_t COOP_MAGIC = 0xC0FFEE42;  // Must match coop_remote
 
 // Remote heartbeats every 5 min; allow 3 missed ones before alarming.
@@ -41,7 +51,8 @@ struct __attribute__((packed)) CoopMsg {
   uint32_t bootCount;
 };
 
-volatile bool doorOpen = false;
+// Written from the ESP-NOW callback; copied into the cloud variables in loop().
+volatile bool remoteDoorOpen = false;
 volatile bool gotMessage = false;
 volatile unsigned long lastHeardMs = 0;
 
@@ -52,7 +63,7 @@ void handleMessage(const uint8_t *data, int len) {
   memcpy(&msg, data, sizeof(msg));
   if (msg.magic != COOP_MAGIC) return;
 
-  doorOpen = msg.doorOpen;
+  remoteDoorOpen = msg.doorOpen;
   lastHeardMs = millis();
   gotMessage = true;
 }
@@ -68,8 +79,18 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
 }
 #endif
 
+void onCloudConnect() {
+  // Modem sleep can drop ESP-NOW packets; we're on USB power anyway.
+  WiFi.setSleep(false);
+  Serial.printf("Cloud connected, WiFi channel %d\n", WiFi.channel());
+  if (WiFi.channel() != WIFI_CHANNEL) {
+    Serial.printf("*** Set WIFI_CHANNEL = %d in coop_remote and coop_home, and reflash ***\n", WiFi.channel());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  delay(1500); // let Serial Monitor attach so the cloud debug output isn't lost
 
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -77,8 +98,11 @@ void setup() {
   setStatusLed(false);
   digitalWrite(LED_GREEN, HIGH); // on-board RGB is active LOW
 
+  initProperties();
+
   WiFi.mode(WIFI_STA);
   esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+  // Listen on the remote's channel until the cloud connection takes over the radio.
   esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
   if (esp_now_init() != ESP_OK) {
@@ -94,18 +118,42 @@ void setup() {
   Serial.println("Listening for coop remote...");
 }
 
+// Called once, on the first message from the remote, so the cloud's first
+// values are real readings rather than boot defaults.
+void startCloud() {
+  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+  ArduinoCloud.addCallback(ArduinoIoTCloudEvent::CONNECT, onCloudConnect);
+  setDebugMessageLevel(2); // 0-4
+  ArduinoCloud.printDebugInfo();
+}
+
 void loop() {
   unsigned long now = millis();
   static unsigned long rxFlashUntil = 0;
+  static bool heardFromRemote = false;
+  static bool cloudStarted = false;
 
   if (gotMessage) {
     gotMessage = false;
+    heardFromRemote = true;
     rxFlashUntil = now + RX_FLASH_MS;
-    Serial.printf("Door %s\n", doorOpen ? "OPEN" : "closed");
+    Serial.printf("Door %s\n", remoteDoorOpen ? "OPEN" : "closed");
   }
   digitalWrite(LED_GREEN, (long)(now - rxFlashUntil) < 0 ? LOW : HIGH);
 
   bool stale = now - lastHeardMs > STALE_AFTER_MS;
+
+  // update Arduino Cloud properties (ON_CHANGE, so only real changes are sent)
+  doorOpen = remoteDoorOpen;
+  remoteStale = stale;
+  minutesSinceHeard = (now - lastHeardMs) / 60000;
+
+  if (cloudStarted) {
+    ArduinoCloud.update();
+  } else if (heardFromRemote) {
+    startCloud();
+    cloudStarted = true;
+  }
 
   if (stale) {
     unsigned long t = now % (6 * STALE_BLINK_MS + STALE_SOLID_MS);
@@ -114,7 +162,7 @@ void loop() {
     } else {
       setStatusLed(true);
     }
-  } else if (doorOpen) {
+  } else if (remoteDoorOpen) {
     setStatusLed((now / BLINK_MS) % 2);
   } else {
     setStatusLed(false);

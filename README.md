@@ -15,6 +15,50 @@ Two Arduino Nano ESP32s talking over ESP-NOW (direct radio, no WiFi router).
 Arduino IDE → Boards Manager → install **Arduino ESP32 Boards** → pick **Arduino Nano ESP32**.
 Flash `coop_home` first and open the Serial Monitor. Then flash `coop_remote`, open and close the switch, and you should see `Door OPEN` / `Door closed` printed.
 
+## Arduino Cloud + MCP server
+
+`coop_home` publishes the door state to Arduino Cloud as `doorOpen`, `remoteStale` and `minutesSinceHeard`, so agents can check it through the MCP server in `mcp_server/` (Ruby). `mcp_server_py/` is the same server in Python.
+
+1. In Arduino Cloud, add the Nano ESP32 as a manual device and create a Thing with those three read-only variables: `doorOpen` (bool), `remoteStale` (bool) and `minutesSinceHeard` (int), all set to update on change.
+2. Copy `coop_home/arduino_secrets.h.example` to `arduino_secrets.h` and fill in the device ID, secret key and 2.4 GHz WiFi details. Then flash `coop_home`.
+3. ESP-NOW has to use the same channel as your router. The Serial Monitor prints that channel when the cloud connects. Set `WIFI_CHANNEL` to it in both sketches and reflash `coop_remote`. Pin your router's 2.4 GHz channel so it doesn't move.
+4. Create an API key in Arduino Cloud, then add the server to your MCP client (for example, Claude Desktop's `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "chicken-coop": {
+      "command": "/path/to/ruby",
+      "args": ["/path/to/chicken-coop-monitor/mcp_server/coop_mcp.rb"],
+      "env": {
+        "ARDUINO_CLIENT_ID": "...",
+        "ARDUINO_CLIENT_SECRET": "...",
+        "COOP_THING_ID": "..."
+      }
+    }
+  }
+}
+```
+
+Install the gems with `cd mcp_server && bundle install`. For `command`, use the full path that `ruby -e 'puts RbConfig.ruby'` prints, not a version-manager shim, since MCP clients don't load your shell setup.
+
+To use the Python version instead, set up its venv with `python3 -m venv mcp_server_py/.venv && mcp_server_py/.venv/bin/pip install -r mcp_server_py/requirements.txt`, then point `command` at `mcp_server_py/.venv/bin/python` and `args` at `mcp_server_py/coop_mcp.py`.
+
+Tools: `get_coop_door_status` (open, closed or unknown, plus whether the reading is stale) and `get_coop_door_history(hours)`.
+
+### Hosting on Fly.io
+
+So claude.ai and the phone app can use it, `mcp_server/` also runs as an HTTP server (`config.ru`). It has no auth, so anyone with the URL can read the door state.
+
+```sh
+cd mcp_server
+fly launch --copy-config --no-deploy   # pick a new app name if chicken-coop-mcp is taken
+fly secrets set ARDUINO_CLIENT_ID=... ARDUINO_CLIENT_SECRET=... COOP_THING_ID=...
+fly deploy
+```
+
+Then in claude.ai, go to Settings → Connectors → Add custom connector, and use `https://<app>.fly.dev/mcp`. The machine sleeps when idle, so the first call after a while takes a second or two longer.
+
 ## Power notes
 
 The Nano ESP32 board draws around 2 mA in deep sleep. The ESP32 chip itself draws far less, but the rest of the board uses power even while it sleeps. On a 2000 mAh battery that works out to about **3–4 weeks**. Solar keeps it running indefinitely.
