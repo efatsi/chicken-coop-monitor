@@ -21,7 +21,7 @@ Flash `coop_home` first and open the Serial Monitor. Then flash `coop_remote`, o
 
 1. In Arduino Cloud, add the Nano ESP32 as a manual device and create a Thing with those three read-only variables: `doorOpen` (bool), `remoteStale` (bool) and `minutesSinceHeard` (int), all set to update on change.
 2. Copy `coop_home/arduino_secrets.h.example` to `arduino_secrets.h` and fill in the device ID, secret key and 2.4 GHz WiFi details. Then flash `coop_home`.
-3. ESP-NOW has to use the same channel as your router. The Serial Monitor prints that channel when the cloud connects. Set `WIFI_CHANNEL` to it in both sketches and reflash `coop_remote`. Pin your router's 2.4 GHz channel so it doesn't move.
+3. Open the Serial Monitor on `coop_home` and copy the MAC address it prints at boot into `HOME_MAC` in `coop_remote`, then flash `coop_remote`. The remote sends straight to that address and finds `coop_home`'s WiFi channel on its own, so the router's channel doesn't matter.
 4. Create an API key in Arduino Cloud, then add the server to your MCP client (for example, Claude Desktop's `claude_desktop_config.json`):
 
 ```json

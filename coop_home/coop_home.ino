@@ -17,9 +17,9 @@
 // thingProperties.h). Copy arduino_secrets.h.example to arduino_secrets.h
 // and fill it in. The cloud connection only starts once the remote is first
 // heard, so a reboot never publishes a made-up door state. ESP-NOW and WiFi
-// share one radio, so once joined, ESP-NOW listens on the router's channel;
-// WIFI_CHANNEL here and in coop_remote must match it. The channel is
-// printed to Serial when the cloud connects.
+// share one radio, so once joined, ESP-NOW listens on the router's channel.
+// coop_remote finds that channel itself, but it needs this board's MAC
+// address, which is printed to Serial at boot.
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -35,7 +35,7 @@ void setStatusLed(bool on) {
   digitalWrite(LED_BUILTIN, on);
 }
 
-const uint8_t WIFI_CHANNEL = 1;          // Must match coop_remote and the router's channel
+const uint8_t WIFI_CHANNEL = 1;          // Listening channel until WiFi joins the router
 const uint32_t COOP_MAGIC = 0xC0FFEE42;  // Must match coop_remote
 
 // Remote heartbeats every 5 min; allow 3 missed ones before alarming.
@@ -83,9 +83,6 @@ void onCloudConnect() {
   // Modem sleep can drop ESP-NOW packets; we're on USB power anyway.
   WiFi.setSleep(false);
   Serial.printf("Cloud connected, WiFi channel %d\n", WiFi.channel());
-  if (WiFi.channel() != WIFI_CHANNEL) {
-    Serial.printf("*** Set WIFI_CHANNEL = %d in coop_remote and coop_home, and reflash ***\n", WiFi.channel());
-  }
 }
 
 void setup() {
@@ -111,6 +108,11 @@ void setup() {
     ESP.restart();
   }
   esp_now_register_recv_cb(onReceive);
+
+  uint8_t mac[6];
+  esp_wifi_get_mac(WIFI_IF_STA, mac);
+  Serial.printf("coop_home MAC (copy into HOME_MAC in coop_remote): {0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X}\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
   // Start the staleness clock at boot so we don't alarm before the
   // remote's first heartbeat has had a chance to arrive.
