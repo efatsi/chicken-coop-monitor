@@ -146,8 +146,12 @@ void loop() {
   bool stale = now - lastHeardMs > STALE_AFTER_MS;
 
   // update Arduino Cloud properties (ON_CHANGE, so only real changes are sent)
+  // doorClosed stays false until the door has been seen open since boot, so
+  // a reboot with the door already closed doesn't fire a "door closed" alert.
+  static bool seenOpen = false;
+  if (remoteDoorOpen) seenOpen = true;
   doorOpen = remoteDoorOpen;
-  doorClosed = !remoteDoorOpen;
+  doorClosed = seenOpen && !remoteDoorOpen;
   remoteStale = stale;
   minutesSinceHeard = (now - lastHeardMs) / 60000;
 

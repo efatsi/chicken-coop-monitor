@@ -6,7 +6,8 @@
 // coop_home only connects after the remote's first message, so these are
 // never published with boot defaults.
 //   doorOpen          true = open. Only meaningful while remoteStale is false.
-//   doorClosed        always !doorOpen (for dashboards/triggers keyed on closed)
+//   doorClosed        !doorOpen, but false until the door has been open since
+//                     boot, so a reboot doesn't trip a "door closed" alert
 //   remoteStale       true = no word from the coop in STALE_AFTER_MS
 //   minutesSinceHeard minutes since the coop remote last checked in
 
