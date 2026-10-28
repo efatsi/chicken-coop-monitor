@@ -147,6 +147,7 @@ void loop() {
 
   // update Arduino Cloud properties (ON_CHANGE, so only real changes are sent)
   doorOpen = remoteDoorOpen;
+  doorClosed = !remoteDoorOpen;
   remoteStale = stale;
   minutesSinceHeard = (now - lastHeardMs) / 60000;
 
